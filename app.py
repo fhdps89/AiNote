@@ -175,16 +175,33 @@ if 'storage' not in st.session_state: st.session_state.storage = 'Local'
 
 pangrams = ["다람쥐 헌 쳇바퀴에 타고파", "닭 콩팥 훔친 집사", "물컵 속 팥 찾던 형"]
 
+# ... (기존 코드들) ...
+
 with st.sidebar:
     st.markdown("<h1 style='color: #FF4B4B; margin:0;'>AI NOTE</h1>", unsafe_allow_html=True)
     st.caption("Target: Global No.1")
     st.markdown("---")
+    # 관리자 모드 체크박스
     is_admin = st.checkbox("관리자 모드 (Admin)", value=False)
 
+# [NEW] 비밀번호 기능이 추가된 진입로
 if is_admin:
-    run_admin_dashboard()
-    st.stop()
+    # 1. 비밀번호 입력받기
+    password = st.sidebar.text_input("🔑 관리자 암호 입력", type="password")
+    
+    # 2. 비밀번호 확인
+    if password == st.secrets["admin_password"]:
+        st.sidebar.success("접속 승인! 🔓")
+        run_admin_dashboard() # 암호가 맞을 때만 실행
+        st.stop()
+    elif password:
+        st.sidebar.error("암호가 틀렸습니다. 🚫")
+        st.stop() # 틀리면 멈춤
+    else:
+        st.sidebar.warning("관리자 암호를 입력하세요.")
+        st.stop() # 입력 안 하면 멈춤
 
+# ... (아래 일반 사용자 로직은 그대로) ...
 if st.session_state.step == 'WELCOME':
     st.markdown("<br><br><h1 style='text-align: center;'>✍️ 환영합니다</h1>", unsafe_allow_html=True)
     time.sleep(2)
