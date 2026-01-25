@@ -7,8 +7,15 @@ from datetime import datetime
 from io import BytesIO
 from PIL import Image
 
-# --- 기초 설정 및 폴더 생성 ---
-st.set_page_config(page_title="나만의 AI 필기 노트", layout="centered")
+# ---------------------------------------------------------
+# [수정 1] 앱의 첫인상 결정! (브라우저 탭 설정)
+# ---------------------------------------------------------
+st.set_page_config(
+    page_title="AI Note Pro",  # 탭에 뜨는 이름 (있어 보이게 변경!)
+    page_icon="📝",            # 탭 아이콘 (파비콘)
+    layout="centered",
+    initial_sidebar_state="expanded" # 사이드바가 처음부터 열려있게
+)
 
 # 저장소 폴더가 없으면 만듭니다
 if not os.path.exists('user_data_local'):
@@ -156,16 +163,28 @@ def save_handwriting_image(image_data, text, storage_type):
         f.write(image_data)
     return filename, save_path
 
-# =========================================================
-# [핵심] 사이드바 설정 및 화면 분기
-# =========================================================
+# ---------------------------------------------------------
+# [수정 2] 사이드바에 브랜드 입히기
+# ---------------------------------------------------------
 with st.sidebar:
-    st.header("⚙️ 설정")
-    # 관리자 모드 체크박스
-    is_admin = st.checkbox("관리자 모드 (Admin)", value=False)
+    # 1. 로고 영역 (텍스트 로고로 대체, 이미지 파일이 있다면 st.image 사용 가능)
+    st.markdown("""
+        <div style='text-align: center; padding: 10px;'>
+            <h1 style='color: #FF4B4B; margin:0;'>AI NOTE</h1>
+            <p style='font-size: 12px; color: gray;'>Powered by Handwriting AI</p>
+        </div>
+        """, unsafe_allow_html=True)
     
     st.markdown("---")
-    st.info("개발 버전: v0.3.0\nTarget: Goodnotes Exit")
+    
+    # 2. 메뉴 영역
+    st.header("⚙️ 설정 (Settings)")
+    is_admin = st.checkbox("관리자 모드 (Admin Access)", value=False)
+    
+    # 3. 버전 정보 (하단에 깔끔하게)
+    st.markdown("---")
+    st.caption("ver 1.0.0 (Release)")
+    st.caption("Target: Global No.1 Note App")
 
 # 관리자 모드가 켜져 있으면 -> 대시보드 실행하고 여기서 멈춤 (아래 코드 실행 안 함)
 if is_admin:
