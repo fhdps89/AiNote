@@ -2,5 +2,4 @@ streamlit
 streamlit-drawable-canvas
 Pillow
 numpy
-google-api-python-client
-google-auth
+google-cloud-storage
