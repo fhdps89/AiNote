@@ -77,9 +77,9 @@ def create_grid_drawing(text, width=1000, height=200):
         }
         objects.append(line)
     return {"version": "4.4.0", "objects": objects}
-
 def save_handwriting_image(image_data, text, storage_type):
-    if image_data is None: return None, None
+    if image_data is None: return False, None, None  # 실패 리턴
+    
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_text = text.replace(" ", "_") 
     filename = f"{timestamp}_{safe_text}.png"
@@ -88,21 +88,22 @@ def save_handwriting_image(image_data, text, storage_type):
     save_path = os.path.join('user_data_local', filename)
     with open(save_path, "wb") as f:
         f.write(image_data)
-        
+    
+    upload_success = True  # 기본값: 성공
+    
     # 2. 구글 드라이브 업로드 시도
     if storage_type == 'Cloud':
-        # 로딩 표시
         with st.spinner(f"☁️ 구글 드라이브로 전송 중..."):
             success, msg = upload_to_drive(image_data, filename, TARGET_FOLDER_ID)
             
         if success:
             st.toast(f"✅ 업로드 성공! (File ID: {msg})")
-            st.success(f"구글 드라이브 저장 완료: {filename}") # 화면에도 크게 표시
         else:
-            # [중요] 실패하면 여기에 빨간 에러 메시지가 뜹니다!
+            # [중요] 실패하면 에러를 띄우고, 실패 신호(False)를 기록
             st.error(f"❌ 업로드 실패! 이유를 확인하세요:\n{msg}")
+            upload_success = False 
             
-    return filename, save_path
+    return upload_success, filename, save_path
 
 # ---------------------------------------------------------
 # 관리자 대시보드 (기존 유지)
@@ -206,18 +207,20 @@ elif st.session_state.step == 'NOTICE_TUTORIAL':
         st.session_state.step = 'TUTORIAL_RUN'
         st.rerun()
 
+# --- 5. 튜토리얼 진행 (여기 전체를 교체하세요) ---
 elif st.session_state.step == 'TUTORIAL_RUN':
     idx = st.session_state.tutorial_idx
     target_text = pangrams[idx]
     
+    # 상단 진행바
     st.progress(st.session_state.accuracy / 100)
     st.markdown(f"## 👉 :blue[{target_text}]")
     
+    # 캔버스 그리기
     grid_json = create_grid_drawing(target_text)
-# [수정] 펜 두께(stroke_width) 3으로 설정, 색상 등 옵션 복구
     canvas = st_canvas(
         fill_color="rgba(255, 165, 0, 0.3)",
-        stroke_width=3,            # <--- 이게 빠져서 두꺼웠던 겁니다! (3~5 추천)
+        stroke_width=3,            # 펜 두께 정상화 (3)
         stroke_color="#000000",
         background_color="#ffffff",
         initial_drawing=grid_json,
@@ -228,19 +231,31 @@ elif st.session_state.step == 'TUTORIAL_RUN':
         key=f"canvas_{idx}"
     )
     
+    # [수정된 버튼 로직] 성공 여부를 확인하고 넘어갑니다!
     if st.button("저장 (Save)", type="primary"):
         if canvas.image_data is not None:
+            # 1. 이미지 데이터 변환
             img = Image.fromarray(canvas.image_data.astype('uint8'))
             buf = BytesIO()
             img.save(buf, format='PNG')
-            # [핵심] 여기서 저장이 일어납니다!
-            save_handwriting_image(buf.getvalue(), target_text, st.session_state.storage)
             
-        st.session_state.accuracy += 5
-        st.session_state.tutorial_idx += 1
-        if st.session_state.tutorial_idx >= len(pangrams):
-            st.session_state.step = 'TUTORIAL_CHOICE'
-        st.rerun()
+            # 2. 저장 함수 호출 (성공 여부 is_success를 받아옴)
+            is_success, fname, fpath = save_handwriting_image(buf.getvalue(), target_text, st.session_state.storage)
+            
+            # 3. [중요] 성공했을 때만 다음 단계로 이동!
+            if is_success:
+                st.session_state.accuracy += 5
+                st.session_state.tutorial_idx += 1
+                
+                # 다음 단계가 더 남았는지, 끝났는지 확인
+                if st.session_state.tutorial_idx >= len(pangrams):
+                    st.session_state.step = 'TUTORIAL_CHOICE'
+                
+                # 화면 새로고침 (성공 시에만!)
+                st.rerun()
+            else:
+                # 실패하면 멈춤 (경고 메시지 출력)
+                st.warning("⚠️ 파일 업로드에 실패했습니다. 위의 빨간 에러 메시지를 확인해주세요.")
 
 elif st.session_state.step == 'TUTORIAL_CHOICE':
     st.title("✅ 완료!")
