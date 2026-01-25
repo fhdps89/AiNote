@@ -84,18 +84,23 @@ def save_handwriting_image(image_data, text, storage_type):
     safe_text = text.replace(" ", "_") 
     filename = f"{timestamp}_{safe_text}.png"
     
-    # 1. 로컬에는 무조건 저장 (백업용)
+    # 1. 로컬 저장 (백업)
     save_path = os.path.join('user_data_local', filename)
     with open(save_path, "wb") as f:
         f.write(image_data)
         
-    # 2. 구글 드라이브 업로드 선택 시
+    # 2. 구글 드라이브 업로드 시도
     if storage_type == 'Cloud':
-        success, msg = upload_to_drive(image_data, filename, TARGET_FOLDER_ID)
+        # 로딩 표시
+        with st.spinner(f"☁️ 구글 드라이브로 전송 중..."):
+            success, msg = upload_to_drive(image_data, filename, TARGET_FOLDER_ID)
+            
         if success:
-            st.toast(f"☁️ 구글 드라이브 업로드 성공! (ID: {msg})")
+            st.toast(f"✅ 업로드 성공! (File ID: {msg})")
+            st.success(f"구글 드라이브 저장 완료: {filename}") # 화면에도 크게 표시
         else:
-            st.error(f"업로드 실패: {msg}")
+            # [중요] 실패하면 여기에 빨간 에러 메시지가 뜹니다!
+            st.error(f"❌ 업로드 실패! 이유를 확인하세요:\n{msg}")
             
     return filename, save_path
 
@@ -209,7 +214,19 @@ elif st.session_state.step == 'TUTORIAL_RUN':
     st.markdown(f"## 👉 :blue[{target_text}]")
     
     grid_json = create_grid_drawing(target_text)
-    canvas = st_canvas(initial_drawing=grid_json, update_streamlit=True, height=200, width=1000, key=f"canvas_{idx}")
+# [수정] 펜 두께(stroke_width) 3으로 설정, 색상 등 옵션 복구
+    canvas = st_canvas(
+        fill_color="rgba(255, 165, 0, 0.3)",
+        stroke_width=3,            # <--- 이게 빠져서 두꺼웠던 겁니다! (3~5 추천)
+        stroke_color="#000000",
+        background_color="#ffffff",
+        initial_drawing=grid_json,
+        update_streamlit=True,
+        height=200,
+        width=1000,
+        drawing_mode="freedraw",
+        key=f"canvas_{idx}"
+    )
     
     if st.button("저장 (Save)", type="primary"):
         if canvas.image_data is not None:
