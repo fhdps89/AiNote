@@ -95,35 +95,60 @@ def save_handwriting_image(image_data, text, storage_type):
             
     return upload_success, filename, save_path
 
-# ---------------------------------------------------------
-# 관리자 대시보드 (그대로 유지)
-# ---------------------------------------------------------
+# --- [NEW] 서버 내부 데이터 다운로드 기능이 추가된 관리자 모드 ---
 def run_admin_dashboard():
     st.title("👨‍💻 데이터 품질 관리 센터 (QC)")
-    st.caption("Local Data Only")
+    st.caption("Server Status: Online 🟢")
     
+    # 1. 사이드바: 데이터 반출 (기존 기능 + NEW 로컬 백업 다운로드)
     with st.sidebar:
         st.header("📦 데이터 반출")
+        
+        # [기존] 승인된 데이터셋 다운로드
         if os.path.exists('dataset_verified') and len(os.listdir('dataset_verified')) > 0:
-            shutil.make_archive('my_dataset', 'zip', 'dataset_verified')
-            with open('my_dataset.zip', 'rb') as f:
-                st.download_button("📥 데이터셋 다운로드 (.zip)", f, "goodnotes_dataset.zip", "application/zip", type="primary")
-    
+            shutil.make_archive('verified_dataset', 'zip', 'dataset_verified')
+            with open('verified_dataset.zip', 'rb') as f:
+                st.download_button("📥 승인 데이터셋 (.zip)", f, "verified_dataset.zip", "application/zip", type="primary")
+        
+        st.markdown("---")
+        
+        # [NEW] 서버에 고립된 '로컬 백업' 파일 구조대
+        st.subheader("🆘 서버 원본 파일 구조")
+        st.info("미국 서버의 'user_data_local' 폴더를 강제로 가져옵니다.")
+        
+        if os.path.exists('user_data_local') and len(os.listdir('user_data_local')) > 0:
+            # 폴더 통째로 압축
+            shutil.make_archive('server_backup', 'zip', 'user_data_local')
+            
+            with open('server_backup.zip', 'rb') as f:
+                st.download_button(
+                    label="📥 서버 원본 다운로드 (Backup)",
+                    data=f,
+                    file_name="server_local_backup.zip",
+                    mime="application/zip",
+                    use_container_width=True
+                )
+        else:
+            st.warning("서버에 저장된 로컬 파일이 없습니다.")
+
     st.markdown("---")
     
+    # ... (아래는 기존의 현황판 및 검수 UI 코드 그대로 유지) ...
+    # 파일 현황 파악
     pending_files = [f for f in os.listdir('user_data_local') if f.endswith('.png')]
     verified_files = [f for f in os.listdir('dataset_verified') if f.endswith('.png')]
     trash_files = [f for f in os.listdir('dataset_trash') if f.endswith('.png')]
     
     col1, col2, col3 = st.columns(3)
-    col1.metric("대기 중", f"{len(pending_files)}건")
+    col1.metric("서버 로컬 저장소", f"{len(pending_files)}건", delta="확인 불가" if len(pending_files)==0 else "다운 가능")
     col2.metric("승인됨", f"{len(verified_files)}건")
     col3.metric("휴지통", f"{len(trash_files)}건")
 
     if len(pending_files) == 0:
-        st.success("🎉 대기 중인 데이터가 없습니다.")
+        st.success("🎉 현재 대기 중인 데이터가 없습니다.")
         return
 
+    # 검수 인터페이스 (기존 코드)
     for idx, filename in enumerate(pending_files):
         file_path = os.path.join('user_data_local', filename)
         if idx % 3 == 0: cols = st.columns(3)
