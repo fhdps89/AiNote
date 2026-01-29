@@ -23,7 +23,7 @@ st.set_page_config(
 )
 
 # [설정] 버킷 이름 (기존 그대로 유지)
-BUCKET_NAME = "ainote-bucket-yua" 
+BUCKET_NAME = "ainote-bucket-save1" 
 
 # 폴더 생성
 if not os.path.exists('user_data_local'): os.makedirs('user_data_local')
