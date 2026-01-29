@@ -7,8 +7,9 @@ from io import BytesIO
 from PIL import Image
 import shutil
 
-# --- [NEW] 구글 클라우드 스토리지 라이브러리 ---
+# 구글 라이브러리들
 from google.cloud import storage
+from google.cloud import vision  # [NEW] Vision API 추가
 from google.oauth2 import service_account
 
 # ---------------------------------------------------------
@@ -21,8 +22,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# [중요] 여기에 아까 만든 버킷 이름을 넣으세요! (따옴표 필수)
-BUCKET_NAME = "ainote-bucket-save1"  # <--- 본인이 만든 버킷 이름으로 변경!
+# [설정] 버킷 이름 (기존 그대로 유지)
+BUCKET_NAME = "ainote-bucket-yua" 
 
 # 폴더 생성
 if not os.path.exists('user_data_local'): os.makedirs('user_data_local')
@@ -30,29 +31,85 @@ if not os.path.exists('dataset_verified'): os.makedirs('dataset_verified')
 if not os.path.exists('dataset_trash'): os.makedirs('dataset_trash')
 
 # ---------------------------------------------------------
-# [NEW] GCS 업로드 함수 (여기가 바뀜)
+# [NEW] OCR 함수 (AI가 글씨 읽기)
 # ---------------------------------------------------------
-def upload_to_gcs(file_bytes, filename, bucket_name):
+def detect_text_from_image(image_bytes):
     try:
-        # 1. Secrets에서 로봇 신분증 꺼내기
+        # 1. 인증 정보 가져오기
         gcp_info = st.secrets["gcp_service_account"]
         creds = service_account.Credentials.from_service_account_info(gcp_info)
         
-        # 2. 클라이언트 연결 & 버킷 선택
-        client = storage.Client(credentials=creds, project=gcp_info["project_id"])
-        bucket = client.bucket(bucket_name)
+        # 2. Vision API 클라이언트 연결
+        client = vision.ImageAnnotatorClient(credentials=creds)
+        image = vision.Image(content=image_bytes)
+
+        # 3. 텍스트 감지 요청 (Handwriting에 강한 document_text_detection 사용)
+        response = client.document_text_detection(image=image)
+        text = response.full_text_annotation.text
         
-        # 3. 파일 업로드 (Blob 만들기)
-        blob = bucket.blob(filename)
-        blob.upload_from_string(file_bytes, content_type='image/png')
-        
-        return True, filename
-        
+        if response.error.message:
+            return False, f"Error: {response.error.message}"
+            
+        return True, text
     except Exception as e:
         return False, str(e)
 
 # ---------------------------------------------------------
-# 기존 함수들 (그대로 유지)
+# GCS 업로드 함수 (기존 유지)
+# ---------------------------------------------------------
+def upload_to_gcs(file_bytes, filename, bucket_name):
+    try:
+        gcp_info = st.secrets["gcp_service_account"]
+        creds = service_account.Credentials.from_service_account_info(gcp_info)
+        client = storage.Client(credentials=creds, project=gcp_info["project_id"])
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(filename)
+        blob.upload_from_string(file_bytes, content_type='image/png')
+        return True, filename
+    except Exception as e:
+        return False, str(e)
+
+# ---------------------------------------------------------
+# 저장 및 처리 함수 (OCR 기능 통합)
+# ---------------------------------------------------------
+def save_handwriting_image(image_data, text, storage_type):
+    if image_data is None: return False, None, None, None
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_text = text.replace(" ", "_") 
+    filename = f"{timestamp}_{safe_text}.png"
+    
+    # 1. 로컬 저장
+    save_path = os.path.join('user_data_local', filename)
+    with open(save_path, "wb") as f:
+        f.write(image_data)
+    
+    upload_success = True
+    ocr_result = "OCR 미실행" # 초기값
+    
+    # 2. 클라우드 업로드
+    if storage_type == 'Cloud':
+        with st.spinner("☁️ 클라우드 저장 및 AI 분석 중..."):
+            # A. 업로드
+            success, msg = upload_to_gcs(image_data, filename, BUCKET_NAME)
+            
+            # B. [NEW] OCR 분석 실행!
+            if success:
+                st.toast("업로드 완료! 이제 글씨를 읽습니다...")
+                ocr_success, detected_text = detect_text_from_image(image_data)
+                
+                if ocr_success:
+                    ocr_result = detected_text
+                else:
+                    ocr_result = "분석 실패"
+            else:
+                upload_success = False
+                st.error(f"업로드 실패: {msg}")
+
+    return upload_success, filename, save_path, ocr_result
+
+# ---------------------------------------------------------
+# 유틸리티 함수 (그리드 등)
 # ---------------------------------------------------------
 def create_grid_drawing(text, width=1000, height=200):
     if len(text) == 0: return None
@@ -67,88 +124,34 @@ def create_grid_drawing(text, width=1000, height=200):
         objects.append(line)
     return {"version": "4.4.0", "objects": objects}
 
-def save_handwriting_image(image_data, text, storage_type):
-    if image_data is None: return False, None, None
-    
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    safe_text = text.replace(" ", "_") 
-    filename = f"{timestamp}_{safe_text}.png"
-    
-    # 1. 로컬 저장
-    save_path = os.path.join('user_data_local', filename)
-    with open(save_path, "wb") as f:
-        f.write(image_data)
-    
-    upload_success = True
-    
-    # 2. 클라우드(GCS) 업로드 시도
-    if storage_type == 'Cloud':
-        with st.spinner(f"☁️ 클라우드(GCS)로 전송 중..."):
-            success, msg = upload_to_gcs(image_data, filename, BUCKET_NAME)
-            
-        if success:
-            st.toast(f"✅ 업로드 성공! (GCS: {msg})")
-            st.success(f"클라우드 저장 완료: {filename}")
-        else:
-            st.error(f"❌ 업로드 실패! 이유를 확인하세요:\n{msg}")
-            upload_success = False 
-            
-    return upload_success, filename, save_path
-
-# --- [NEW] 서버 내부 데이터 다운로드 기능이 추가된 관리자 모드 ---
+# ---------------------------------------------------------
+# 관리자 대시보드
+# ---------------------------------------------------------
 def run_admin_dashboard():
     st.title("👨‍💻 데이터 품질 관리 센터 (QC)")
     st.caption("Server Status: Online 🟢")
     
-    # 1. 사이드바: 데이터 반출 (기존 기능 + NEW 로컬 백업 다운로드)
     with st.sidebar:
         st.header("📦 데이터 반출")
-        
-        # [기존] 승인된 데이터셋 다운로드
-        if os.path.exists('dataset_verified') and len(os.listdir('dataset_verified')) > 0:
-            shutil.make_archive('verified_dataset', 'zip', 'dataset_verified')
-            with open('verified_dataset.zip', 'rb') as f:
-                st.download_button("📥 승인 데이터셋 (.zip)", f, "verified_dataset.zip", "application/zip", type="primary")
-        
-        st.markdown("---")
-        
-        # [NEW] 서버에 고립된 '로컬 백업' 파일 구조대
-        st.subheader("🆘 서버 원본 파일 구조")
-        st.info("미국 서버의 'user_data_local' 폴더를 강제로 가져옵니다.")
-        
+        # 서버 백업 다운로드
         if os.path.exists('user_data_local') and len(os.listdir('user_data_local')) > 0:
-            # 폴더 통째로 압축
             shutil.make_archive('server_backup', 'zip', 'user_data_local')
-            
             with open('server_backup.zip', 'rb') as f:
-                st.download_button(
-                    label="📥 서버 원본 다운로드 (Backup)",
-                    data=f,
-                    file_name="server_local_backup.zip",
-                    mime="application/zip",
-                    use_container_width=True
-                )
-        else:
-            st.warning("서버에 저장된 로컬 파일이 없습니다.")
-
+                st.download_button("📥 서버 원본 다운로드", f, "server_local_backup.zip", "application/zip", type="primary")
+                
     st.markdown("---")
     
-    # ... (아래는 기존의 현황판 및 검수 UI 코드 그대로 유지) ...
-    # 파일 현황 파악
     pending_files = [f for f in os.listdir('user_data_local') if f.endswith('.png')]
     verified_files = [f for f in os.listdir('dataset_verified') if f.endswith('.png')]
-    trash_files = [f for f in os.listdir('dataset_trash') if f.endswith('.png')]
     
-    col1, col2, col3 = st.columns(3)
-    col1.metric("서버 로컬 저장소", f"{len(pending_files)}건", delta="확인 불가" if len(pending_files)==0 else "다운 가능")
+    col1, col2 = st.columns(2)
+    col1.metric("대기 중", f"{len(pending_files)}건")
     col2.metric("승인됨", f"{len(verified_files)}건")
-    col3.metric("휴지통", f"{len(trash_files)}건")
 
     if len(pending_files) == 0:
-        st.success("🎉 현재 대기 중인 데이터가 없습니다.")
+        st.info("대기 중인 데이터가 없습니다.")
         return
 
-    # 검수 인터페이스 (기존 코드)
     for idx, filename in enumerate(pending_files):
         file_path = os.path.join('user_data_local', filename)
         if idx % 3 == 0: cols = st.columns(3)
@@ -156,17 +159,16 @@ def run_admin_dashboard():
             try:
                 img = Image.open(file_path)
                 st.image(img, use_container_width=True)
-                b_col1, b_col2 = st.columns(2)
-                if b_col1.button("✅", key=f"ok_{filename}"):
+                if st.button("✅ 승인", key=f"ok_{filename}"):
                     shutil.move(file_path, os.path.join('dataset_verified', filename))
                     st.rerun()
-                if b_col2.button("🗑", key=f"del_{filename}"):
+                if st.button("🗑 삭제", key=f"del_{filename}"):
                     shutil.move(file_path, os.path.join('dataset_trash', filename))
                     st.rerun()
             except: pass
 
 # ---------------------------------------------------------
-# 앱 실행 로직
+# 메인 실행 로직
 # ---------------------------------------------------------
 if 'step' not in st.session_state: st.session_state.step = 'WELCOME'
 if 'accuracy' not in st.session_state: st.session_state.accuracy = 70
@@ -175,33 +177,25 @@ if 'storage' not in st.session_state: st.session_state.storage = 'Local'
 
 pangrams = ["다람쥐 헌 쳇바퀴에 타고파", "닭 콩팥 훔친 집사", "물컵 속 팥 찾던 형"]
 
-# ... (기존 코드들) ...
-
 with st.sidebar:
     st.markdown("<h1 style='color: #FF4B4B; margin:0;'>AI NOTE</h1>", unsafe_allow_html=True)
     st.caption("Target: Global No.1")
-    st.markdown("---")
-    # 관리자 모드 체크박스
     is_admin = st.checkbox("관리자 모드 (Admin)", value=False)
 
-# [NEW] 비밀번호 기능이 추가된 진입로
+# 비밀번호 보호된 관리자 모드
 if is_admin:
-    # 1. 비밀번호 입력받기
     password = st.sidebar.text_input("🔑 관리자 암호 입력", type="password")
-    
-    # 2. 비밀번호 확인
     if password == st.secrets["admin_password"]:
         st.sidebar.success("접속 승인! 🔓")
-        run_admin_dashboard() # 암호가 맞을 때만 실행
+        run_admin_dashboard()
         st.stop()
     elif password:
-        st.sidebar.error("암호가 틀렸습니다. 🚫")
-        st.stop() # 틀리면 멈춤
+        st.sidebar.error("암호 오류")
+        st.stop()
     else:
-        st.sidebar.warning("관리자 암호를 입력하세요.")
-        st.stop() # 입력 안 하면 멈춤
+        st.sidebar.warning("암호를 입력하세요.")
+        st.stop()
 
-# ... (아래 일반 사용자 로직은 그대로) ...
 if st.session_state.step == 'WELCOME':
     st.markdown("<br><br><h1 style='text-align: center;'>✍️ 환영합니다</h1>", unsafe_allow_html=True)
     time.sleep(2)
@@ -226,7 +220,6 @@ elif st.session_state.step == 'CHOOSE_STORAGE':
             st.session_state.step = 'NOTICE_TUTORIAL'
             st.rerun()
     with col2:
-        # 이름 변경: 구글 드라이브 -> 클라우드 스토리지
         if st.button("☁️ 클라우드(GCS) 연동", use_container_width=True):
             st.session_state.storage = 'Cloud'
             st.session_state.step = 'NOTICE_TUTORIAL'
@@ -249,7 +242,7 @@ elif st.session_state.step == 'TUTORIAL_RUN':
     grid_json = create_grid_drawing(target_text)
     canvas = st_canvas(
         fill_color="rgba(255, 165, 0, 0.3)",
-        stroke_width=3, # 펜 두께 정상
+        stroke_width=3,
         stroke_color="#000000",
         background_color="#ffffff",
         initial_drawing=grid_json,
@@ -260,27 +253,53 @@ elif st.session_state.step == 'TUTORIAL_RUN':
         key=f"canvas_{idx}"
     )
     
-    if st.button("저장 (Save)", type="primary"):
+    if st.button("저장 & AI 분석 (Save)", type="primary"):
         if canvas.image_data is not None:
             img = Image.fromarray(canvas.image_data.astype('uint8'))
             buf = BytesIO()
             img.save(buf, format='PNG')
             
-            # 저장 함수 호출 (성공/실패 감지)
-            is_success, fname, fpath = save_handwriting_image(buf.getvalue(), target_text, st.session_state.storage)
+            # [NEW] ocr_result까지 받아옵니다!
+            is_success, fname, fpath, ocr_result = save_handwriting_image(buf.getvalue(), target_text, st.session_state.storage)
             
             if is_success:
+                # -------------------------------------------
+                # 🎉 AI 결과 발표 (여기가 하이라이트!)
+                # -------------------------------------------
+                if st.session_state.storage == 'Cloud':
+                    st.success("☁️ 저장 완료!")
+                    st.markdown("---")
+                    st.subheader("🤖 AI 인식 결과")
+                    
+                    # 정답과 비교
+                    st.write(f"**내가 쓴 글씨:** {ocr_result}")
+                    st.caption(f"**목표 문장:** {target_text}")
+                    
+                    # 정확도 평가 (간단 비교)
+                    if target_text.replace(" ","") in ocr_result.replace(" ","") or ocr_result.strip() in target_text:
+                        st.balloons() # 정답이면 풍선 날리기!
+                        st.info("🎉 정확합니다! AI가 완벽하게 읽었네요.")
+                    else:
+                        st.warning("🤔 음.. 조금 다르게 읽었네요. 글씨를 더 또박또박 써보세요!")
+                    
+                    st.markdown("---")
+                    time.sleep(3) # 결과를 볼 시간 3초 줌
+                else:
+                    st.success("💾 로컬 저장 완료 (OCR은 클라우드 모드에서만 동작합니다)")
+                    time.sleep(1)
+
+                # 다음 단계로
                 st.session_state.accuracy += 5
                 st.session_state.tutorial_idx += 1
                 if st.session_state.tutorial_idx >= len(pangrams):
                     st.session_state.step = 'TUTORIAL_CHOICE'
                 st.rerun()
             else:
-                st.warning("⚠️ 클라우드 업로드에 실패했습니다. 에러 메시지를 확인하세요.")
+                st.warning("⚠️ 저장 실패")
 
 elif st.session_state.step == 'TUTORIAL_CHOICE':
     st.title("✅ 완료!")
-    st.success("모든 데이터가 안전하게 저장되었습니다.")
+    st.success("모든 데이터가 저장되었습니다.")
     if st.button("메인 노트로 이동"):
         st.session_state.step = 'MAIN_NOTE'
         st.rerun()
