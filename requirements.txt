@@ -3,4 +3,4 @@ streamlit-drawable-canvas
 Pillow
 numpy
 google-cloud-storage
-google-cloud-vision  <-- [NEW] 이거 추가!
+google-cloud-vision 
